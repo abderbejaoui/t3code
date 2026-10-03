@@ -1783,7 +1783,7 @@ describe("ClaudeAdapterV2 native fork", () => {
 });
 
 describe("ClaudeAdapterV2 native session identity", () => {
-  const openTurnWithOrdinal = (providerTurnOrdinal: number) =>
+  const openTurnWithOrdinal = (providerTurnOrdinal: number, attach?: "imported" | "minted") =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1827,12 +1827,37 @@ describe("ClaudeAdapterV2 native session identity", () => {
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
           runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
         });
-        const providerThread = yield* runtime.ensureThread({
+        const now = yield* DateTime.now;
+        const ensured = yield* runtime.ensureThread({
           threadId,
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
           runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
         });
-        const now = yield* DateTime.now;
+        let providerThread = ensured;
+        if (attach !== undefined) {
+          // Imports write a provider thread no session of ours has bound:
+          // a strong native ref, no conversation head and no provider turns.
+          // The orchestrator hands such a thread to resumeThread before the
+          // first follow-up, as it does for any thread with a native ref.
+          providerThread = yield* runtime.resumeThread({
+            providerThread:
+              attach === "imported"
+                ? {
+                    ...ensured,
+                    providerSessionId: null,
+                    nativeThreadRef: {
+                      driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                      nativeId: "imported-native-session",
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                  }
+                : ensured,
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+        }
         yield* runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId,
@@ -1866,6 +1891,30 @@ describe("ClaudeAdapterV2 native session identity", () => {
         assert.equal(openedQueries[0]?.options.resume, "native-session-identity");
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
       }),
+  );
+
+  it.effect("resumes an imported native thread on its first provider turn", () =>
+    Effect.gen(function* () {
+      // #15243: the imported session already exists in Claude Code, so
+      // reopening it with a fixed session id fails with "Session ID ... is
+      // already in use" even though no provider turn has been persisted yet.
+      const openedQueries = yield* openTurnWithOrdinal(1, "imported");
+      assert.equal(openedQueries.length, 1);
+      assert.equal(openedQueries[0]?.options.resume, "imported-native-session");
+      assert.equal(openedQueries[0]?.options.sessionId, undefined);
+    }),
+  );
+
+  it.effect("still creates a minted native session that resumeThread re-attached", () =>
+    Effect.gen(function* () {
+      // A thread this adapter minted keeps its provider session id. When its
+      // first create failed, the retry passes through resumeThread too and
+      // must create the session rather than resume one that never existed.
+      const openedQueries = yield* openTurnWithOrdinal(1, "minted");
+      assert.equal(openedQueries.length, 1);
+      assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
+      assert.equal(openedQueries[0]?.options.resume, undefined);
+    }),
   );
 });
 
