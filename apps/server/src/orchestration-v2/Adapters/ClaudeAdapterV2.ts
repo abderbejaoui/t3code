@@ -2987,11 +2987,6 @@ export function makeClaudeAdapterV2(
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
-        // Native threads resumeThread adopted while no provider session of
-        // ours had bound them. An imported Claude Code session arrives that
-        // way: a strong native ref, no conversation head and no provider turn,
-        // yet the native session already exists on disk.
-        const adoptedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
@@ -6937,17 +6932,16 @@ export function makeClaudeAdapterV2(
           // it; reopening with a fixed session id makes the CLI fail fast with
           // "Session ID ... is already in use".
           const hasPersistedProviderTurn = turnInput.providerTurnOrdinal > 1;
-          // An imported session has no provider turn yet either, but
-          // resumeThread adopted it from outside this adapter, so its native
-          // session exists just the same.
-          const adoptedExistingNativeThread = (yield* Ref.get(adoptedNativeThreads)).has(
-            nativeThreadId,
-          );
+          // An imported session has no provider turn yet either, but the
+          // import stamped its provider thread as adopted from outside this
+          // app, so its native session exists just the same.
+          const importedNativeThread =
+            turnInput.providerThread.nativeMetadata?.nativeThreadOrigin === "imported";
           const shouldResume =
             resumeSessionAt !== undefined ||
             openedWithResume ||
             hasPersistedProviderTurn ||
-            adoptedExistingNativeThread;
+            importedNativeThread;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -7503,26 +7497,6 @@ export function makeClaudeAdapterV2(
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
-              // A provider thread no session of ours has bound was adopted from
-              // outside this adapter (an imported Claude Code session), so its
-              // native session already exists and the first follow-up has to
-              // resume it. A thread this adapter minted keeps its provider
-              // session id, so a retry after a failed create still creates.
-              const adoptedNativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
-              if (
-                threadInput.providerThread.providerSessionId === null &&
-                adoptedNativeThreadId !== undefined &&
-                adoptedNativeThreadId !== null
-              ) {
-                yield* Ref.update(adoptedNativeThreads, (current) => {
-                  if (current.has(adoptedNativeThreadId)) {
-                    return current;
-                  }
-                  const updated = new Set(current);
-                  updated.add(adoptedNativeThreadId);
-                  return updated;
-                });
-              }
               const updatedAt = yield* DateTime.now;
               return {
                 ...threadInput.providerThread,

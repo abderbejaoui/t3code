@@ -328,6 +328,7 @@ const make = Effect.gen(function* () {
             handoffIds: [],
             forkedFrom: null,
             pendingBackgroundTasks: [],
+            nativeMetadata: { nativeThreadOrigin: "imported" },
             createdAt,
             updatedAt,
           };

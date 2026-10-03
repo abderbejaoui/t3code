@@ -1835,22 +1835,23 @@ describe("ClaudeAdapterV2 native session identity", () => {
         });
         let providerThread = ensured;
         if (attach !== undefined) {
-          // Imports write a provider thread no session of ours has bound:
-          // a strong native ref, no conversation head and no provider turns.
-          // The orchestrator hands such a thread to resumeThread before the
-          // first follow-up, as it does for any thread with a native ref.
+          // An import writes a provider thread with a strong native ref, no
+          // conversation head, no provider turns and an `imported` origin in
+          // its native metadata. By the time the first follow-up starts, the
+          // orchestrator has bound a provider session to it and handed it to
+          // resumeThread, as it does for any thread with a native ref.
           providerThread = yield* runtime.resumeThread({
             providerThread:
               attach === "imported"
                 ? {
                     ...ensured,
-                    providerSessionId: null,
                     nativeThreadRef: {
                       driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
                       nativeId: "imported-native-session",
                       strength: "strong",
                     },
                     nativeConversationHeadRef: null,
+                    nativeMetadata: { nativeThreadOrigin: "imported" },
                   }
                 : ensured,
             threadId,
@@ -1907,9 +1908,9 @@ describe("ClaudeAdapterV2 native session identity", () => {
 
   it.effect("still creates a minted native session that resumeThread re-attached", () =>
     Effect.gen(function* () {
-      // A thread this adapter minted keeps its provider session id. When its
-      // first create failed, the retry passes through resumeThread too and
-      // must create the session rather than resume one that never existed.
+      // A thread this adapter minted carries no import origin. When its first
+      // create failed, the retry passes through resumeThread too and must
+      // create the session rather than resume one that never existed.
       const openedQueries = yield* openTurnWithOrdinal(1, "minted");
       assert.equal(openedQueries.length, 1);
       assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");

@@ -129,6 +129,7 @@ it.effect("imports messages once and preserves the provider native resume bindin
         nativeId: providerSessionId,
         strength: "strong",
       },
+      nativeMetadata: { nativeThreadOrigin: "imported" },
     });
     expect(
       writes[0]
